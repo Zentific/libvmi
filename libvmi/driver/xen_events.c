@@ -1012,6 +1012,76 @@ status_t xen_shutdown_single_step(vmi_instance_t vmi) {
     return VMI_SUCCESS;
 }
 
+/* attempts to honor input in the 'enable' parameter, but if
+ *  an event type is observed which requires a listener to
+ *  properly function, this may be ignored (return value indicates
+ *  an override condition if > 0
+ */
+int xen_set_listener_required(vmi_instance_t vmi, int enable)
+{
+
+    int ret = 0;
+    int mode = 0;
+    int rc = -1;
+    int necessary = 0;
+
+    /* Listener required for almost all mem_events because the domain VCPU 
+     *  from which the access violation originates is always paused. (This is 
+     *  externally observable upon receipt of an event, because within
+     *  the event itself, flags=|MEM_EVENT_FLAG_VCPU_PAUSED). 
+     * The only exception to the above is the very specific context where 
+     *  page access perms == HVMMEM_access_n2rwx, which avoids a pause while
+     *  still delivering an event. As long as a single page has perms other 
+     *  than n2rwx, a listener is ultimately required.
+     *
+     * NOTE: within hypervisor code, HVMMEM_access_n2rwx == p2m_access_n2rwx 
+     */
+
+    /* interrupt trap must be reinjected (or IP rewound, instruction restored)
+     *  so listener required at all times.
+     */
+    rc = xc_get_hvm_param(xch, dom, HVM_PARAM_MEMORY_EVENT_INT3, &mode);
+    if(mode & HVMPME_mode_sync) necessary = 1;
+   
+    /* Monitor trap flag MAY pause VCPU(s) and VMEXITs on each instruction
+     *  boundary if HVMPME_mode_sync set. If so, listener required.
+     */
+    rc = xc_get_hvm_param(xch, dom, HVM_PARAM_MEMORY_EVENT_SINGLE_STEP, &mode);
+    if(mode & HVMPME_mode_sync) necessary = 1;
+
+    /* MSR/CR* registers MAY pause VCPU if HVMPME_mode_sync mode is set. If so,
+     *  listener is required.
+     */
+    rc = xc_get_hvm_param(xch, dom, HVM_PARAM_MEMORY_EVENT_CR0, &mode);
+    if(mode & HVMPME_mode_sync) necessary = 1;
+    rc = xc_get_hvm_param(xch, dom, HVM_PARAM_MEMORY_EVENT_CR3, &mode);
+    if(mode & HVMPME_mode_sync) necessary = 1;
+    rc = xc_get_hvm_param(xch, dom, HVM_PARAM_MEMORY_EVENT_CR4, &mode);
+    if(mode & HVMPME_mode_sync) necessary = 1;
+#ifdef HVM_PARAM_MEMORY_EVENT_MSR
+    rc = xc_get_hvm_param(xch, dom, HVM_PARAM_MEMORY_EVENT_MSR, &mode);
+    if(mode & HVMPME_mode_sync) necessary = 1;
+#endif
+
+    if ( necessary && !enabled ) {
+        warnprint("Xen events - disabling of listener requested, but events"
+            " that require a listener are active. Input overridden and listener"
+            " is being enabled.\n"); 
+        enabled = 1;
+        ret = 1;
+    }
+
+    rc = xc_domain_set_access_required(xch, dom, enabled);
+
+    if ( rc < 0 ) {
+        errprint("Error %d setting mem_access listener required to %d\n",
+            rc, enabled);
+        ret = -1;
+    }
+    
+    return ret;
+}
+
 status_t xen_events_listen(vmi_instance_t vmi, uint32_t timeout)
 {
     xc_interface * xch;

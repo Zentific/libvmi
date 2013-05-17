@@ -101,6 +101,7 @@ typedef struct xen_events {
 status_t xen_events_init(vmi_instance_t vmi);
 void xen_events_destroy(vmi_instance_t vmi);
 status_t xen_events_listen(vmi_instance_t vmi, uint32_t timeout);
+status_t xen_set_listener_required(vmi_instance_t vmi, int required);
 status_t xen_set_reg_access(vmi_instance_t vmi, reg_event_t event);
 status_t xen_set_intr_access(vmi_instance_t vmi, interrupt_event_t event);
 status_t xen_set_int3_access(vmi_instance_t vmi, interrupt_event_t event);
