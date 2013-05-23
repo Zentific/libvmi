@@ -310,6 +310,15 @@ xen_check_domainid(
     int rc = xc_domain_getinfo(xchandle, domainid, 1,
                            &info);
 
+#ifdef VMI_DEBUG
+	dbprint("xc_domain_getinfo rc for domain id %u was: %i\n", domainid, rc);
+	if(rc>0) {
+		dbprint("xc_domain_getinfo returned domain id: %u, expected: %u\n", info.domid, domainid);
+	} else if(rc == -1) {
+		dbprint("xc_domain_getinfo error: %s\n", strerror(errno));
+	}
+#endif
+
     if(rc==1 && info.domid==(uint32_t)domainid) {
         ret = VMI_SUCCESS;
     }
