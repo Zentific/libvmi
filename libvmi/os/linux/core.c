@@ -7,6 +7,7 @@
  * retains certain rights in this software.
  *
  * Author: Bryan D. Payne (bdpayne@acm.org)
+ * Author: Steve Maresca (steve@zentific.com)
  *
  * This file is part of LibVMI.
  *
@@ -68,4 +69,55 @@ linux_init(
 
 _exit:
     return ret;
+}
+
+/* helper function. Linux-specific pa to va, no page handling required
+ *  (only for kernel mode and only for use during early library initialization)
+ *
+ * assumptions about 32b versus 64b rely upon callers only providing
+ *  kernel addresses, as this function is too simplistic to ever produce
+ *  correct results for userspace virtuial addresses. (intentional)
+ *
+ * the constants below have been stable across many kernel versions.
+ *  phys_base is rarely non-zero (but this needs some verification).
+ */
+#define START_KERNEL_map 0xffffffff80000000
+#define phys_base 0x0
+static inline addr_t __phys_addr(vmi_instance_t vmi, addr_t x) {
+    if (x >= START_KERNEL_map) {
+        /* 64b */
+        x -= START_KERNEL_map;
+        x += phys_base;
+    } else {
+        /* 32b */
+        x -= vmi->page_offset;
+    }
+    return x;
+}
+
+addr_t linux_find_cr3 (vmi_instance_t vmi) {
+   
+    addr_t cr3 = 0; 
+    addr_t vpgd = 0;
+    addr_t pgd_offset = vmi->os.linux_instance.pgd_offset;
+    addr_t init_mm_vaddr = vmi_translate_ksym2v(vmi, "init_mm");
+
+    int is64 = (init_mm_vaddr & 0xf000000000000000) == 0xf000000000000000;
+
+    if(is64){
+        vmi_read_64_pa(vmi, __phys_addr(vmi, init_mm_vaddr+pgd_offset), &vpgd);
+        vmi->page_mode = VMI_PM_IA32E;
+        cr3 = __phys_addr(vmi, vpgd);
+    } else {
+        vmi_read_32_pa(vmi, __phys_addr(vmi, init_mm_vaddr+pgd_offset), &vpgd);
+        dbprint("-- pgd is (v)%lx==(p)%lx\n", vpgd, __phys_addr(vmi, vpgd));
+        //vmi->page_mode = VMI_PM_LEGACY;
+        vmi->page_mode = VMI_PM_PAE;
+        cr3 = __phys_addr(vmi, vpgd);
+    }
+
+    /* TODO test page modes here to validate translation */
+    //    dbprint("-- init_mm (v)%lx==(p)%lx vpgd %lx pgd %lx\n", init_mm_vaddr, __phys_addr(vmi, init_mm_vaddr), vpgd, __phys_addr(vmi, vpgd));
+    return cr3;
+
 }

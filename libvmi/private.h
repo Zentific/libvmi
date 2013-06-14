@@ -345,6 +345,8 @@ typedef struct _windows_unicode_string32 {
     addr_t *address);
     addr_t windows_find_cr3(
     vmi_instance_t vmi);
+    addr_t linux_find_cr3(
+    vmi_instance_t vmi);
     int find_pname_offset(
     vmi_instance_t vmi,
     check_magic_func check);

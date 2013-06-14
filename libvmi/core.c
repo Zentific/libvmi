@@ -337,6 +337,8 @@ find_cr3(
     if (VMI_OS_WINDOWS == vmi->os_type) {
         vmi->os.windows_instance.version = VMI_OS_WINDOWS_UNKNOWN;
         return windows_find_cr3(vmi);
+    } else if (VMI_OS_LINUX == vmi->os_type) {
+        return linux_find_cr3(vmi);
     }
 
     errprint("find_kpgd not implemented for this target OS\n");
