@@ -6,6 +6,7 @@ check_libvmi_SOURCES = \
     check_runner.c \
     check_tests.h \
     test_accessor.c \
+    test_events.c \
     test_init.c \
     test_print.c \
     test_read.c \

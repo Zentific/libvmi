@@ -66,6 +66,10 @@ main (void)
     suite_add_tcase(s, cache_tcase());
     suite_add_tcase(s, get_va_pages_tcase());
 
+#if ENABLE_XEN_EVENTS
+    suite_add_tcase(s, events_tcase());
+#endif
+
     /* run the tests */
     SRunner *sr = srunner_create(s);
     srunner_run_all(sr, CK_VERBOSE);
