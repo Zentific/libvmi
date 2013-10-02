@@ -29,15 +29,17 @@
 #include "check_tests.h"
 #include <time.h>
 
-bool cr3_received = 0;
+#define TEST_TIMEOUT 30 /* seconds */
+
+bool event_received = 0;
 static int interrupted = 0;
 
 static void close_handler(int sig){
     interrupted = sig;
 }
 
-void cr3_one_task_callback(vmi_instance_t vmi, vmi_event_t *event){
-    cr3_received = 1;
+void event_received_callback(vmi_instance_t vmi, vmi_event_t *event){
+    event_received = 1;
 }
 
 /* Test registration and receipt of control register writes
@@ -50,8 +52,10 @@ START_TEST (test_libvmi_cr_write_event)
 {
     vmi_instance_t vmi = NULL;
     vmi_event_t cr3_event = {0};
-
     struct sigaction act;
+
+    interrupted = 0;
+    event_received = 0;
 
     /* for a clean exit ... not really sure how this will interact with
      *  check's signal handling stuff across forks
@@ -64,7 +68,11 @@ START_TEST (test_libvmi_cr_write_event)
     sigaction(SIGINT,  &act, NULL);
     sigaction(SIGALRM, &act, NULL);
 
-    vmi_init(&vmi, VMI_XEN | VMI_INIT_COMPLETE | VMI_INIT_EVENTS, get_testvm());
+    status_t e = vmi_init(&vmi, VMI_XEN | VMI_INIT_COMPLETE | VMI_INIT_EVENTS, get_testvm());
+
+    if(e == VMI_FAILURE){
+        ck_abort_msg("CR write test failed: could not initialize LibVMI");
+    }
 
     /* Configure an event to track when the process is running.
      * (The CR3 register is updated on task context switch, allowing
@@ -79,7 +87,7 @@ START_TEST (test_libvmi_cr_write_event)
     cr3_event.reg_event.in_access = VMI_REGACCESS_W;
 
     /* callback fired when event is encountered */
-    cr3_event.callback = cr_write_callback;
+    cr3_event.callback = event_received_callback;
 
     /* register the configured event */
     vmi_register_event(vmi, &cr3_event);
@@ -87,7 +95,7 @@ START_TEST (test_libvmi_cr_write_event)
     time_t start, now;
     now = start = time(NULL);
 
-    while(!interrupted && (now - start) < 30){
+    while(!interrupted && (now - start) < TEST_TIMEOUT){
         status = vmi_events_listen(vmi,500);
 
         now = time(NULL);
@@ -99,8 +107,73 @@ START_TEST (test_libvmi_cr_write_event)
 
     vmi_destroy(vmi);
     
-    fail_if((now - start) >= 30, "CR register event receipt timeout reached");
-    fail_if(cr3_received != 1, "CR register event receipt failed");
+    fail_if((now - start) >= TEST_TIMEOUT, "CR3 register event test timeout reached");
+    fail_if(event_received != 1, "CR3 register test receipt failed");
+}
+END_TEST
+
+/* Test registration and receipt of interrupt events (INT3 being the 
+ *  only one currently available)
+ */
+START_TEST (test_libvmi_int3_event)
+{
+    vmi_instance_t vmi = NULL;
+    vmi_event_t int3_event = {0};
+    struct sigaction act;
+
+    interrupted = 0;
+    event_received = 0;
+
+    /* for a clean exit ... not really sure how this will interact with
+     *  check's signal handling stuff across forks
+     */
+    act.sa_handler = close_handler;
+    act.sa_flags = 0;
+    sigemptyset(&act.sa_mask);
+    sigaction(SIGHUP,  &act, NULL);
+    sigaction(SIGTERM, &act, NULL);
+    sigaction(SIGINT,  &act, NULL);
+    sigaction(SIGALRM, &act, NULL);
+
+    status_t e = vmi_init(&vmi, VMI_XEN | VMI_INIT_PARTIAL | VMI_INIT_EVENTS, get_testvm());
+
+    if(e == VMI_FAILURE){
+        ck_abort_msg("INT3 event test failed: could not initialize LibVMI");
+    }
+
+    /* Configure an event to track when the process is running.
+     *  A process with an embedded, intentional int3 instruction
+     *  of the form 0xCC is being executed repeatedly in a loop every
+     *  10 seconds within the test VM in order to guarantee that
+     *  events are generated.
+     */
+    int3_event.type = VMI_EVENT_INTERRUPT;
+    int3_event.interrupt_event.enabled = 1;
+    int3_event.interrupt_event.reinject = 1;
+
+    /* callback fired when event is encountered */
+    int3_event.callback = event_received_callback;
+
+    /* register the configured event */
+    vmi_register_event(vmi, &int3_event);
+
+    time_t start, now;
+    now = start = time(NULL);
+
+    while(!interrupted && (now - start) < TEST_TIMEOUT){
+        status = vmi_events_listen(vmi,500);
+
+        now = time(NULL);
+
+        if (status != VMI_SUCCESS) {
+            interrupted = -1;
+        }
+    }
+
+    vmi_destroy(vmi);
+    
+    fail_if((now - start) >= TEST_TIMEOUT, "INT3 interrupt event test timeout reached");
+    fail_if(event_received != 1, "INT3 interrupt event test failed");
 }
 END_TEST
 
@@ -108,7 +181,8 @@ END_TEST
 TCase *events_tcase (void)
 {
     TCase *tc_events = tcase_create("LibVMI Events");
-    tcase_add_test(tc_events, test_cr_write_event);
+    tcase_add_test(tc_events, test_libvmi_cr_write_event);
+    tcase_add_test(tc_events, test_libvmi_int3_event);
     return tc_events;
 }
 
