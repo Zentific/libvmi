@@ -148,10 +148,26 @@ typedef enum page_size {
 
 typedef uint64_t reg_t;
 typedef enum registers {
+    AX,
+    AL,
+    AH,
     RAX,
+
+    BX,
+    BL,
+    BH,
     RBX,
+
+    CX,
+    CL,
+    CH,
     RCX,
+
+    DX,
+    DL,
+    DH,
     RDX,
+
     RBP,
     RSI,
     RDI,
