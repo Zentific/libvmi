@@ -1732,18 +1732,71 @@ kvm_get_vcpureg(
 
     if (VMI_PM_IA32E == vmi->page_mode) {
         switch (reg) {
+        case AX:
+            *value = parse_reg_value("RAX", regs) & 0x000000ff;
+            break;
+        case AL:
+            *value = parse_reg_value("RAX", regs) & 0x0000000f;
+            break;
+        case AH:
+            *value = parse_reg_value("RAX", regs) & 0x000000f0;
+            break;
+        case EAX:
+            *value = parse_reg_value("RAX", regs) & 0x0000ffff;
+            break;
         case RAX:
             *value = parse_reg_value("RAX", regs);
+            break;
+
+        case BX:
+            *value = parse_reg_value("RBX", regs) & 0x000000ff;
+            break;
+        case BL:
+            *value = parse_reg_value("RBX", regs) & 0x0000000f;
+            break;
+        case BH:
+            *value = parse_reg_value("RBX", regs) & 0x000000f0;
+            break;
+        case EBX:
+            *value = parse_reg_value("RBX", regs) & 0x0000ffff;
             break;
         case RBX:
             *value = parse_reg_value("RBX", regs);
             break;
+
+        case CX:
+            *value = parse_reg_value("RCX", regs) & 0x000000ff;
+            break;
+        case CL:
+            *value = parse_reg_value("RCX", regs) & 0x0000000f;
+            break;
+        case CH:
+            *value = parse_reg_value("RCX", regs) & 0x000000f0;
+            break;
+        case ECX:
+            *value = parse_reg_value("RCX", regs) & 0x0000ffff;
+            break;
         case RCX:
             *value = parse_reg_value("RCX", regs);
+            break;
+
+        case DX:
+            *value = parse_reg_value("RDX", regs) & 0x000000ff;
+            break;
+        case DL:
+            *value = parse_reg_value("RDX", regs) & 0x0000000f;
+            break;
+        case DH:
+            *value = parse_reg_value("RDX", regs) & 0x000000f0;
+            break;
+        case EDX:
+            *value = parse_reg_value("RDX", regs) & 0x0000ffff;
             break;
         case RDX:
             *value = parse_reg_value("RDX", regs);
             break;
+
+
         case RBP:
             *value = parse_reg_value("RBP", regs);
             break;
@@ -1756,6 +1809,7 @@ kvm_get_vcpureg(
         case RSP:
             *value = parse_reg_value("RSP", regs);
             break;
+
         case R8:
             *value = parse_reg_value("R8", regs);
             break;
@@ -1827,17 +1881,22 @@ kvm_get_vcpureg(
     else {
         switch (reg) {
         case RAX:
+#error dont forget here! (also have stacked cases for backwards-compat: case EAX fallthrough case RAX
             *value = parse_reg_value("EAX", regs);
             break;
+
         case RBX:
             *value = parse_reg_value("EBX", regs);
             break;
+
         case RCX:
             *value = parse_reg_value("ECX", regs);
             break;
+
         case RDX:
             *value = parse_reg_value("EDX", regs);
             break;
+
         case RBP:
             *value = parse_reg_value("EBP", regs);
             break;
