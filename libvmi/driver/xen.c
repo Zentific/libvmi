@@ -968,57 +968,71 @@ xen_get_vcpureg_hvm(
 
     switch (reg) {
     case AX:
-        *value = (reg_t) hvm_cpu->rax & 0xffff;
+        *value = (reg_t) hvm_cpu->rax & 0x000000ff;
         break;
     case AL:
-        *value = (reg_t) hvm_cpu->rax & 0x00ff;
+        *value = (reg_t) hvm_cpu->rax & 0x0000000f;
         break;
     case AH:
-        *value = (reg_t) hvm_cpu->rax & 0xff00;
+        *value = (reg_t) hvm_cpu->rax & 0x000000f0;
+        break;
+    case EAX:
+#error we should have this too, because technically, RAX is 64 and EAX is 32, shouldnt equate the two
+        *value = (reg_t) hvm_cpu->rax & 0x0000ffff;
         break;
     case RAX:
         *value = (reg_t) hvm_cpu->rax;
         break;
 
     case BX:
-        *value = (reg_t) hvm_cpu->rbx & 0xffff;
+        *value = (reg_t) hvm_cpu->rbx & 0x000000ff;
         break;
     case BL:
-        *value = (reg_t) hvm_cpu->rbx & 0x00ff;
+        *value = (reg_t) hvm_cpu->rbx & 0x0000000f;
         break;
     case BH:
-        *value = (reg_t) hvm_cpu->rbx & 0xff00;
+        *value = (reg_t) hvm_cpu->rbx & 0x000000f0;
+        break;
+    case EBX:
+        *value = (reg_t) hvm_cpu->rbx & 0x0000ffff;
         break;
     case RBX:
         *value = (reg_t) hvm_cpu->rbx;
         break;
 
     case CX:
-        *value = (reg_t) hvm_cpu->rcx & 0xffff;
+        *value = (reg_t) hvm_cpu->rcx & 0x000000ff;
         break;
     case CL:
-        *value = (reg_t) hvm_cpu->rcx & 0x00ff;
+        *value = (reg_t) hvm_cpu->rcx & 0x0000000f;
         break;
     case CH:
-        *value = (reg_t) hvm_cpu->rcx & 0xff00;
+        *value = (reg_t) hvm_cpu->rcx & 0x000000f0;
+        break;
+    case ECX:
+        *value = (reg_t) hvm_cpu->rcx & 0x0000ffff;
         break;
     case RCX:
         *value = (reg_t) hvm_cpu->rcx;
         break;
 
     case DX:
-        *value = (reg_t) hvm_cpu->rdx & 0xffff;
+        *value = (reg_t) hvm_cpu->rdx & 0x000000ff;
         break;
     case DL:
-        *value = (reg_t) hvm_cpu->rdx & 0x00ff;
+        *value = (reg_t) hvm_cpu->rdx & 0x0000000f;
         break;
     case DH:
-        *value = (reg_t) hvm_cpu->rdx & 0xff00;
+        *value = (reg_t) hvm_cpu->rdx & 0x000000f0;
+        break;
+    case EDX:
+        *value = (reg_t) hvm_cpu->rdx & 0x0000ffff;
         break;
     case RDX:
         *value = (reg_t) hvm_cpu->rdx;
         break;
 
+#warning EBP, ESI, etc here
     case RBP:
         *value = (reg_t) hvm_cpu->rbp;
         break;
@@ -1622,52 +1636,64 @@ xen_get_vcpureg_pv64(
     switch (reg) {
 
     case AX:
-        *value = (reg_t) vcpu_ctx->user_regs.rax & 0xffff;
+        *value = (reg_t) vcpu_ctx->user_regs.rax & 0x000000ff;
         break;
     case AL:
-        *value = (reg_t)vcpu_ctx->user_regs.rax & 0x00ff;
+        *value = (reg_t)vcpu_ctx->user_regs.rax & 0x0000000f;
         break;
     case AH:
-        *value = (reg_t) vcpu_ctx->user_regs.rax & 0xff00;
+        *value = (reg_t) vcpu_ctx->user_regs.rax & 0x000000f0;
+        break;
+    case EAX:
+        *value = (reg_t) vcpu_ctx->user_regs.rax & 0x0000ffff;
         break;
     case RAX:
         *value = (reg_t) vcpu_ctx->user_regs.rax;
         break;
 
     case BX:
-        *value = (reg_t) vcpu_ctx->user_regs.rbx & 0xffff;
+        *value = (reg_t) vcpu_ctx->user_regs.rbx & 0x000000ff;
         break;
     case BL:
-        *value = (reg_t)vcpu_ctx->user_regs.rbx & 0x00ff;
+        *value = (reg_t)vcpu_ctx->user_regs.rbx & 0x0000000f;
         break;
     case BH:
-        *value = (reg_t) vcpu_ctx->user_regs.rbx & 0xff00;
+        *value = (reg_t) vcpu_ctx->user_regs.rbx & 0x000000f0;
+        break;
+    case EBX:
+        *value = (reg_t) vcpu_ctx->user_regs.rbx & 0x0000ffff;
         break;
     case RBX:
         *value = (reg_t) vcpu_ctx->user_regs.rbx;
         break;
 
     case CX:
-        *value = (reg_t) vcpu_ctx->user_regs.rcx & 0xffff;
+        *value = (reg_t) vcpu_ctx->user_regs.rcx & 0x000000ff;
         break;
     case CL:
-        *value = (reg_t)vcpu_ctx->user_regs.rcx & 0x00ff;
+        *value = (reg_t)vcpu_ctx->user_regs.rcx & 0x0000000f;
         break;
     case CH:
-        *value = (reg_t) vcpu_ctx->user_regs.rcx & 0xff00;
+        *value = (reg_t) vcpu_ctx->user_regs.rcx & 0x000000f0;
+        break;
+    case ECX:
+        *value = (reg_t) vcpu_ctx->user_regs.rcx & 0x0000ffff;
         break;
     case RCX:
         *value = (reg_t) vcpu_ctx->user_regs.rcx;
         break;
 
     case DX:
-        *value = (reg_t) vcpu_ctx->user_regs.rdx & 0xffff;
+        *value = (reg_t) vcpu_ctx->user_regs.rdx & 0x000000ff;
         break;
     case DL:
-        *value = (reg_t)vcpu_ctx->user_regs.rdx & 0x00ff;
+        *value = (reg_t)vcpu_ctx->user_regs.rdx & 0x0000000f;
         break;
     case DH:
-        *value = (reg_t) vcpu_ctx->user_regs.rdx & 0xff00;
+        *value = (reg_t) vcpu_ctx->user_regs.rdx & 0x000000f0;
+        break;
+    case EDX:
+        *value = (reg_t) vcpu_ctx->user_regs.rdx & 0x0000ffff;
         break;
     case RDX:
         *value = (reg_t) vcpu_ctx->user_regs.rdx;
@@ -1928,34 +1954,84 @@ xen_get_vcpureg_pv32(
     }
 
     switch (reg) {
+    case AX:
+        *value = (reg_t) vcpu_ctx->user_regs.eax & 0x000000ff;
+        break;
+    case AL:
+        *value = (reg_t) vcpu_ctx->user_regs.eax & 0x0000000f;
+        break;
+    case AH:
+        *value = (reg_t) vcpu_ctx->user_regs.eax & 0x000000f0;
+        break;
+    case EAX:
     case RAX:
         *value = (reg_t) vcpu_ctx->user_regs.eax;
         break;
+
+    case BX:
+        *value = (reg_t) vcpu_ctx->user_regs.ebx & 0x000000ff;
+        break;
+    case BL:
+        *value = (reg_t) vcpu_ctx->user_regs.ebx & 0x0000000f;
+        break;
+    case BH:
+        *value = (reg_t) vcpu_ctx->user_regs.ebx & 0x000000f0;
+        break;
+    case EBX:
     case RBX:
         *value = (reg_t) vcpu_ctx->user_regs.ebx;
         break;
+
+    case CX:
+        *value = (reg_t) vcpu_ctx->user_regs.ecx & 0x000000ff;
+        break;
+    case CL:
+        *value = (reg_t) vcpu_ctx->user_regs.ecx & 0x0000000f;
+        break;
+    case CH:
+        *value = (reg_t) vcpu_ctx->user_regs.ecx & 0x000000f0;
+        break;
+    case ECX:
     case RCX:
         *value = (reg_t) vcpu_ctx->user_regs.ecx;
         break;
+
+    case DX:
+        *value = (reg_t) vcpu_ctx->user_regs.edx & 0x000000ff;
+        break;
+    case DL:
+        *value = (reg_t) vcpu_ctx->user_regs.edx & 0x0000000f;
+        break;
+    case DH:
+        *value = (reg_t) vcpu_ctx->user_regs.edx & 0x000000f0;
+        break;
+    case EDX:
     case RDX:
         *value = (reg_t) vcpu_ctx->user_regs.edx;
         break;
+
+    case EBP:
     case RBP:
         *value = (reg_t) vcpu_ctx->user_regs.ebp;
         break;
+    case ESI:
     case RSI:
         *value = (reg_t) vcpu_ctx->user_regs.esi;
         break;
+    case EDI:
     case RDI:
         *value = (reg_t) vcpu_ctx->user_regs.edi;
         break;
+    case ESP:
     case RSP:
         *value = (reg_t) vcpu_ctx->user_regs.esp;
         break;
 
+    case EIP:
     case RIP:
         *value = (reg_t) vcpu_ctx->user_regs.eip;
         break;
+    case EFLAGS:
     case RFLAGS:
         *value = (reg_t) vcpu_ctx->user_regs.eflags;
         break;
