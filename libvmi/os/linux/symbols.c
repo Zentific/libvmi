@@ -131,6 +131,8 @@ linux_system_map_symbol_to_address(
     }
     (*address) = (addr_t) strtoull(row, NULL, 16);
 
+    free(row);
+
     return VMI_SUCCESS;
 error_exit:
     if (row)
