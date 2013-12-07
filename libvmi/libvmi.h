@@ -151,27 +151,39 @@ typedef enum registers {
     AX,
     AL,
     AH,
+    EAX,
     RAX,
 
     BX,
     BL,
     BH,
+    EBX,
     RBX,
 
     CX,
     CL,
     CH,
+    ECX,
     RCX,
 
     DX,
     DL,
     DH,
+    EDX,
     RDX,
 
+    EBP,
     RBP,
+
+    ESI,
     RSI,
+
+    EDI,
     RDI,
+
+    ESP,
     RSP,
+
     R8,
     R9,
     R10,
@@ -181,7 +193,10 @@ typedef enum registers {
     R14,
     R15,
 
+    EIP,
     RIP,
+
+    EFLAGS,
     RFLAGS,
 
     CR0,
