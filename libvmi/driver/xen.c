@@ -977,7 +977,6 @@ xen_get_vcpureg_hvm(
         *value = (reg_t) hvm_cpu->rax & 0x000000f0;
         break;
     case EAX:
-#error we should have this too, because technically, RAX is 64 and EAX is 32, shouldnt equate the two
         *value = (reg_t) hvm_cpu->rax & 0x0000ffff;
         break;
     case RAX:
@@ -1045,6 +1044,7 @@ xen_get_vcpureg_hvm(
     case RSP:
         *value = (reg_t) hvm_cpu->rsp;
         break;
+
     case R8:
         *value = (reg_t) hvm_cpu->r8;
         break;
@@ -1069,9 +1069,13 @@ xen_get_vcpureg_hvm(
     case R15:
         *value = (reg_t) hvm_cpu->r15;
         break;
+
+#warning EIP here
     case RIP:
         *value = (reg_t) hvm_cpu->rip;
         break;
+
+#warning EFLAGS here
     case RFLAGS:
         *value = (reg_t) hvm_cpu->rflags;
         break;
@@ -1276,6 +1280,7 @@ _bail:
     return ret;
 }
 
+#warning register update (may be) needed here too
 static status_t
 xen_set_vcpureg_hvm(
     vmi_instance_t vmi,
@@ -1793,6 +1798,7 @@ _bail:
     return ret;
 }
 
+#warning register update (may be) needed here too
 static status_t
 xen_set_vcpureg_pv64(
     vmi_instance_t vmi,
@@ -2080,6 +2086,7 @@ _bail:
     return ret;
 }
 
+#warning register update (may be) needed here too
 static status_t
 xen_set_vcpureg_pv32(
     vmi_instance_t vmi,
