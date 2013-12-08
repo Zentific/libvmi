@@ -229,6 +229,8 @@ driver_kvm_setup(
     instance->get_memsize_ptr = &kvm_get_memsize;
     instance->get_vcpureg_ptr = &kvm_get_vcpureg;
     instance->set_vcpureg_ptr = NULL;
+#warning note-to-self: implement this for kvm
+#error fixme
     instance->get_address_width_ptr = NULL;
     instance->read_page_ptr = &kvm_read_page;
     instance->write_ptr = &kvm_write;
