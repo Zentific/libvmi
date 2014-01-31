@@ -294,6 +294,7 @@ AC_CONFIG_FILES(Makefile \
                 libvmi.pc \
                 libvmi/Makefile \
                 libvmi/config/Makefile \
+                libvmi/rbtree/Makefile \
                 examples/Makefile \
                 tests/Makefile
 )

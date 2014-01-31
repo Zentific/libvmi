@@ -1620,7 +1620,7 @@ typedef struct {
                                              *  byte on the target page.
                                              */
 
-    uint64_t npages;                        /* Unsupported at the moment */
+    uint64_t range;                        /* Unsupported at the moment */
 
     vmi_mem_access_t in_access;             /* Page permissions used to trigger
                                              *  memory events. See enum
@@ -1734,13 +1734,13 @@ struct vmi_event {
         } while(0)
 
 /* Convenience macro to setup a memory event */
-#define SETUP_MEM_EVENT(_event, _addr, _granularity, _access, _callback) \
+#define SETUP_MEM_EVENT(_event, _addr, _granularity, _range, _access, _callback) \
         do { \
             (_event)->type = VMI_EVENT_MEMORY; \
             (_event)->mem_event.physical_address = _addr; \
             (_event)->mem_event.granularity = _granularity; \
+            (_event)->mem_event.range = _range; \
             (_event)->mem_event.in_access = _access; \
-            (_event)->mem_event.npages = 1; \
             (_event)->callback = _callback; \
         } while(0)
 

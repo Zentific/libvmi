@@ -395,10 +395,8 @@ status_t process_unhandled_mem(vmi_instance_t vmi, memevent_page_t *page,
 {
 
     // Clear the page's access flags
-    mem_event_t event = { 0 };
-    event.physical_address = page->key << 12;
-    event.npages = 1;
-    xen_set_mem_access(vmi, event, VMI_MEMACCESS_N);
+    mem_event_t disable = { .physical_address = page->key << 12, .range = 1 };
+    xen_set_mem_access(vmi, disable, VMI_MEMACCESS_N);
 
     // Queue the VMI_MEMEVENT_PAGE
     if (page->event) {
@@ -408,20 +406,25 @@ status_t process_unhandled_mem(vmi_instance_t vmi, memevent_page_t *page,
     // Queue each VMI_MEMEVENT_BYTE
     if (page->byte_events)
     {
-        event_iter_t i;
-        addr_t *pa;
-        vmi_event_t *loop;
-        for_each_event(vmi, i, page->byte_events, &pa, &loop)
+        addr_t low = 0ULL, high = ~low;
+        stk_stack* enum_nodes = RBEnumerate(page->byte_events,&low,&high);
+        rb_red_blk_node *node = NULL;
+        while ( (node = StackPop(enum_nodes)) )
         {
-            vmi_step_event(vmi, loop, req->vcpu_id, 1, NULL);
+            vmi_event_t *byte_event = (vmi_event_t *)node->info;
+            vmi_step_event(vmi, byte_event, req->vcpu_id, 1, NULL);
         }
+        free(enum_nodes);
 
-        // Free up memory of byte events GHashTable
-        g_hash_table_destroy(page->byte_events);
+        // Free up memory of byte events RBTree
+        RBTreeDestroy(page->byte_events);
+        page->byte_events = NULL;
     }
 
-    // Clear page from LibVMI GhashTable
-    g_hash_table_remove(vmi->mem_events, &page->key);
+    // Clear page from LibVMI RBTree
+    rb_red_blk_node *node = RBExactQuery(vmi->mem_events, &page->key);
+    RBDelete(vmi->mem_events,node);
+    free(page);
 
     return VMI_SUCCESS;
 
@@ -461,7 +464,8 @@ status_t process_mem(vmi_instance_t vmi, mem_event_request_t req)
     xc_domain_hvm_getcontext_partial(xch, dom,
             HVM_SAVE_CODE(CPU), req.vcpu_id, &ctx, sizeof(ctx));
 
-    memevent_page_t * page = g_hash_table_lookup(vmi->mem_events, &req.gfn);
+    rb_red_blk_node *node = RBExactQuery(vmi->mem_events, &req.gfn);
+    memevent_page_t * page = node?node->info:NULL;
     vmi_mem_access_t out_access;
     if(req.access_r) out_access = VMI_MEMACCESS_R;
     else if(req.access_w) out_access = VMI_MEMACCESS_W;
@@ -470,8 +474,6 @@ status_t process_mem(vmi_instance_t vmi, mem_event_request_t req)
     if (page)
     {
         uint8_t cb_issued = 0;
-        // To prevent use-after-free of 'page' in case it is freed after the first cb
-        GHashTable *byte_events = page->byte_events;
 
         if (page->event && (page->event->mem_event.in_access & out_access))
         {
@@ -479,11 +481,12 @@ status_t process_mem(vmi_instance_t vmi, mem_event_request_t req)
             cb_issued = 1;
         }
 
-        if (byte_events)
+        if (page->byte_events)
         {
             // Check if the offset has a byte-event registered
             addr_t pa = (req.gfn<<12) + req.offset;
-            vmi_event_t *byte_event = (vmi_event_t *)g_hash_table_lookup(byte_events, &pa);
+            rb_red_blk_node *node = RBExactQuery(page->byte_events, &pa);
+            vmi_event_t *byte_event = node?node->info:NULL;
 
             if(byte_event && (byte_event->mem_event.in_access & out_access))
             {
@@ -960,8 +963,10 @@ status_t xen_set_mem_access(vmi_instance_t vmi, mem_event_t event, vmi_mem_acces
 
     addr_t page_key = event.physical_address >> 12;
 
-    uint64_t npages = page_key + event.npages > xe->mem_event.max_pages
-        ? xe->mem_event.max_pages - page_key: event.npages;
+    uint64_t range = 1;
+    if(VMI_MEMEVENT_PAGE == event.granularity) {
+        range = page_key + event.range > xe->mem_event.max_pages ? xe->mem_event.max_pages - page_key : event.range;
+    }
 
     // Convert betwen vmi_mem_access_t and hvmmem_access_t
     // Xen does them backwards....
@@ -978,9 +983,9 @@ status_t xen_set_mem_access(vmi_instance_t vmi, mem_event_t event, vmi_mem_acces
         case VMI_MEMACCESS_X_ON_WRITE: access = HVMMEM_access_rx2rw; break;
     }
 
-    dbprint(VMI_DEBUG_XEN, "--Setting memaccess for domain %lu on physical address: %"PRIu64" npages: %"PRIu64"\n",
-        dom, event.physical_address, npages);
-    if((rc = xc_hvm_set_mem_access(xch, dom, access, page_key, npages))){
+    dbprint(VMI_DEBUG_XEN, "--Setting memaccess for domain %lu on physical address: %"PRIu64" range: %"PRIu64"\n",
+        dom, event.physical_address, range);
+    if((rc = xc_hvm_set_mem_access(xch, dom, access, page_key, range))){
         errprint("xc_hvm_set_mem_access failed with code: %d\n", rc);
         return VMI_FAILURE;
     }

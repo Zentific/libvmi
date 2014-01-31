@@ -42,6 +42,7 @@
 #include "debug.h"
 #include "libvmi.h"
 #include "os/os_interface.h"
+#include "rbtree/red_black_tree.h"
 
 /**
  * @brief LibVMI Instance.
@@ -121,7 +122,7 @@ struct vmi_instance {
 
     GHashTable *interrupt_events; /**< interrupt event to function mapping (key: interrupt) */
 
-    GHashTable *mem_events; /**< mem event to functions mapping (key: physical address) */
+    rb_red_blk_tree *mem_events; /**< mem event to functions mapping (key: physical address) */
 
     GHashTable *reg_events; /**< reg event to functions mapping (key: reg) */
 
@@ -137,11 +138,12 @@ struct vmi_instance {
 /** Page-level memevent struct to also hold byte-level events in the embedded hashtable */
 typedef struct memevent_page {
 
+    vmi_instance_t vmi;
     vmi_mem_access_t access_flag; /**< combined page access flag */
     vmi_event_t *event; /**< page event registered */
     addr_t key; /**< page # */
 
-    GHashTable  *byte_events; /**< byte events */
+    rb_red_blk_tree  *byte_events; /**< byte events */
 
 } memevent_page_t;
 
@@ -209,6 +211,9 @@ typedef struct _windows_unicode_string32 {
     int is_addr_aligned(
     vmi_instance_t vmi,
     addr_t addr);
+    int int64cmp(
+    const void* a,
+    const void* b);
 
 /*-------------------------------------
  * cache.c

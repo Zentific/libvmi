@@ -145,3 +145,11 @@ vmi_free_unicode_str(
     memset((void *) p_us, 0, sizeof(*p_us));
     free(p_us);
 }
+
+int
+int64cmp(const void* a,const void* b) {
+  if( *(uint64_t*)a > *(uint64_t*)b) return(1);
+  if( *(uint64_t*)a < *(uint64_t*)b) return(-1);
+  return(0);
+}
+

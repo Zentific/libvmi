@@ -32,8 +32,10 @@
 
 #define _GNU_SOURCE
 #include <glib.h>
+#include "rbtree/red_black_tree.h"
 
-vmi_mem_access_t combine_mem_access(vmi_mem_access_t base, vmi_mem_access_t add)
+static inline vmi_mem_access_t
+combine_mem_access(vmi_mem_access_t base, vmi_mem_access_t add)
 {
 
     if (add == base)
@@ -86,28 +88,14 @@ void step_wrapper_free(gpointer value, gpointer data)
     free(wrap);
 }
 
-gboolean memevent_page_clean(gpointer key, gpointer value, gpointer data)
-{
-
-    vmi_instance_t vmi = (vmi_instance_t) data;
-    memevent_page_t *page = (memevent_page_t*) value;
-    if (page->event)
-        vmi_clear_event(vmi, page->event);
-    // if the driver is page-level, this adds some overhead
-    // as we update the page-access flag as we remove each byte-level event
-    if (page->byte_events)
-    {
-        g_hash_table_foreach_steal(page->byte_events, event_entry_free, vmi);
-        g_hash_table_destroy(page->byte_events);
-    }
-
-    return TRUE;
-}
-
 void memevent_page_free(gpointer value)
 {
     memevent_page_t *page = (memevent_page_t *) value;
-    free(value);
+    // We only auto-free during shutdown.
+    if(page->vmi->shutting_down) {
+        if(page->byte_events) RBTreeDestroy(page->byte_events);
+        free(page);
+    }
 }
 
 void events_init(vmi_instance_t vmi)
@@ -118,11 +106,9 @@ void events_init(vmi_instance_t vmi)
     }
 
     vmi->interrupt_events = g_hash_table_new(g_int_hash, g_int_equal);
-    vmi->mem_events = g_hash_table_new_full(g_int64_hash, g_int64_equal, NULL,
-            memevent_page_free);
+    vmi->mem_events = RBTreeCreate(int64cmp, NULL, memevent_page_free, NULL, NULL);
     vmi->reg_events = g_hash_table_new(g_int_hash, g_int_equal);
-    vmi->ss_events = g_hash_table_new_full(g_int_hash, g_int_equal, g_free,
-            NULL);
+    vmi->ss_events = g_hash_table_new_full(g_int_hash, g_int_equal, g_free, NULL);
 }
 
 void events_destroy(vmi_instance_t vmi)
@@ -134,8 +120,9 @@ void events_destroy(vmi_instance_t vmi)
 
     if (vmi->mem_events)
     {
-        g_hash_table_foreach_remove(vmi->mem_events, memevent_page_clean, vmi);
-        g_hash_table_destroy(vmi->mem_events);
+        mem_event_t disable = {.physical_address=0ULL, .range=~(0ULL)};
+        driver_set_mem_access(vmi, disable, VMI_MEMACCESS_N);
+        RBTreeDestroy(vmi->mem_events);
     }
 
     if (vmi->reg_events)
@@ -252,115 +239,160 @@ void step_and_reg_events(vmi_instance_t vmi, vmi_event_t *singlestep_event)
     vmi->step_events = remain;
 }
 
-status_t register_mem_event(vmi_instance_t vmi, vmi_event_t *event)
-{
+status_t register_mem_event_byte(vmi_instance_t vmi, vmi_event_t *event,
+        memevent_page_t *page, vmi_mem_access_t page_access_flag) {
 
     status_t rc = VMI_FAILURE;
-    memevent_page_t *page = NULL;
+
+    if (page->byte_events) {
+
+        rb_red_blk_node* node = RBExactQuery(page->byte_events,
+                &event->mem_event.physical_address);
+
+        if (node) {
+            dbprint(VMI_DEBUG_EVENTS,
+                    "An event is already registered on this byte: 0x%"PRIx64"\n",
+                    event->mem_event.physical_address);
+            goto done;
+        }
+
+        // Now check for range overlap
+        node = RBTreeInsert(page->byte_events,
+                &event->mem_event.physical_address, event);
+        rb_red_blk_node* prev = TreePredecessor(page->byte_events, node);
+        rb_red_blk_node* next = TreeSuccessor(page->byte_events, node);
+
+        if (prev != page->byte_events->nil) {
+            vmi_event_t *prev_event = (vmi_event_t *) prev->info;
+            if (prev_event->mem_event.physical_address
+                    + prev_event->mem_event.range
+                    > event->mem_event.physical_address) {
+                RBDelete(page->byte_events, node);
+                goto done;
+            }
+        }
+
+        if (next != page->byte_events->nil) {
+            vmi_event_t *next_event = (vmi_event_t *) prev->info;
+            if (next_event->mem_event.physical_address
+                    <= event->mem_event.physical_address
+                            + event->mem_event.range) {
+                RBDelete(page->byte_events, node);
+                goto done;
+            }
+        }
+
+        if (VMI_SUCCESS
+                == driver_set_mem_access(vmi, event->mem_event,
+                        page_access_flag)) {
+            page->access_flag = page_access_flag;
+            RBTreeInsert(page->byte_events, &event->mem_event.physical_address,
+                    event);
+            rc = VMI_SUCCESS;
+        }
+    } else if (VMI_SUCCESS
+            == driver_set_mem_access(vmi, event->mem_event, page_access_flag)) {
+        page->byte_events = RBTreeCreate(int64cmp, NULL, NULL, NULL, NULL);
+        page->access_flag = page_access_flag;
+        RBTreeInsert(page->byte_events, &event->mem_event.physical_address,
+                event);
+        rc = VMI_SUCCESS;
+    }
+
+    done: return rc;
+}
+
+status_t register_mem_event(vmi_instance_t vmi, vmi_event_t *event) {
+
+    status_t rc = VMI_FAILURE;
 
     vmi_memevent_granularity_t granularity = event->mem_event.granularity;
     addr_t page_key = event->mem_event.physical_address >> 12;
 
+    rb_red_blk_node* node = RBExactQuery(vmi->mem_events, &page_key);
+    memevent_page_t *page = node ? node->info : NULL;
+
     // Page already has event(s) registered
-    page = g_hash_table_lookup(vmi->mem_events, &page_key);
-    if (NULL != page)
-    {
+    if (NULL != page) {
 
         vmi_mem_access_t page_access_flag = combine_mem_access(
                 page->access_flag, event->mem_event.in_access);
 
-        if (granularity == VMI_MEMEVENT_PAGE)
-        {
-            if (page->event)
-            {
+        if (granularity == VMI_MEMEVENT_PAGE) {
+            if (page->event) {
                 dbprint(VMI_DEBUG_EVENTS,
                         "An event is already registered on this page: %"PRIu64"\n",
                         page_key);
+                goto done;
             }
-            else
-            {
-                if (VMI_SUCCESS
-                        == driver_set_mem_access(vmi, event->mem_event,
-                                page_access_flag))
-                {
-                    page->access_flag = page_access_flag;
-                    page->event = event;
-                    rc = VMI_SUCCESS;
-                }
+
+            if (VMI_SUCCESS
+                    == driver_set_mem_access(vmi, event->mem_event,
+                            page_access_flag)) {
+                page->access_flag = page_access_flag;
+                page->event = event;
+                rc = VMI_SUCCESS;
             }
+        } else if (granularity == VMI_MEMEVENT_BYTE) {
+            register_mem_event_byte(vmi, event, page, page_access_flag);
         }
-        else if (granularity == VMI_MEMEVENT_BYTE)
-        {
-            if (page->byte_events)
-            {
-                if (NULL
-                        != g_hash_table_lookup(page->byte_events,
-                                &(event->mem_event.physical_address)))
-                {
-                    dbprint(VMI_DEBUG_EVENTS,
-                            "An event is already registered on this byte: 0x%"PRIx64"\n",
-                            event->mem_event.physical_address);
-                }
-                else
-                {
-                    if (VMI_SUCCESS
-                            == driver_set_mem_access(vmi, event->mem_event,
-                                    page_access_flag))
-                    {
-                        page->access_flag = page_access_flag;
-                        g_hash_table_insert(page->byte_events,
-                                &(event->mem_event.physical_address), event);
-                        rc = VMI_SUCCESS;
-                    }
-                }
-            }
-            else
-            {
-                if (VMI_SUCCESS
-                        == driver_set_mem_access(vmi, event->mem_event,
-                                page_access_flag))
-                {
-                    page->byte_events = g_hash_table_new(g_int64_hash,
-                            g_int64_equal);
-                    page->access_flag = page_access_flag;
-                    g_hash_table_insert(page->byte_events,
-                            &(event->mem_event.physical_address), event);
-                    rc = VMI_SUCCESS;
-                }
-            }
-        }
-    }
-    else
+    } else
     // Page has no event registered
     if (VMI_SUCCESS
             == driver_set_mem_access(vmi, event->mem_event,
-                    event->mem_event.in_access))
-    {
+                    event->mem_event.in_access)) {
 
         page = (memevent_page_t *) g_malloc0(sizeof(memevent_page_t));
         page->access_flag = event->mem_event.in_access;
         page->key = page_key;
+        page->vmi = vmi;
 
-        if (granularity == VMI_MEMEVENT_PAGE)
-        {
+        // Now we are going to check if the event range
+        // is already assigned to another event
+        rb_red_blk_node* node = RBTreeInsert(vmi->mem_events, &(page->key),
+                page);
+
+        // If we are registering a byte event, the page wrapper can overlap
+        // with another page-level range, so we only check range
+        // if this event is a page event.
+        if (granularity == VMI_MEMEVENT_PAGE) {
+
+            rb_red_blk_node* prev = TreePredecessor(vmi->mem_events, node);
+            rb_red_blk_node* next = TreeSuccessor(vmi->mem_events, node);
+
+            if (prev != vmi->mem_events->nil) {
+                memevent_page_t *prev_page = (memevent_page_t*) prev->info;
+                if (prev_page->event
+                        && prev_page->key + prev_page->event->mem_event.range
+                                > page->key) {
+                    RBDelete(vmi->mem_events, node);
+                    return rc;
+                }
+            }
+
+            if (next != vmi->mem_events->nil) {
+                memevent_page_t *next_page = (memevent_page_t*) next->info;
+                if (next_page->key < page->key + event->mem_event.range) {
+                    RBDelete(vmi->mem_events, node);
+                    return rc;
+                }
+            }
+
             page->event = event;
-            dbprint(VMI_DEBUG_EVENTS, "Enabling memory event on page: %"PRIu64"\n", page_key);
-        }
-        else
-        {
-            page->byte_events = g_hash_table_new(g_int64_hash, g_int64_equal);
-            g_hash_table_insert(page->byte_events,
-                    &(event->mem_event.physical_address), event);
             dbprint(VMI_DEBUG_EVENTS,
-                    "Enabling memory event on byte 0x%"PRIx64", page: %"PRIu64"\n",
-                    event->mem_event.physical_address, page_key);
+                    "Enabling memory event on page: %"PRIu64"\n", page_key);
+
+        } else {
+            register_mem_event_byte(vmi, event, page, event->mem_event.in_access);
+            /*dbprint(VMI_DEBUG_EVENTS,
+             "Enabling memory event on byte 0x%"PRIx64", page: %"PRIu64"\n",
+             event->mem_event.physical_address, page_key);*/
         }
 
-        g_hash_table_insert(vmi->mem_events, &(page->key), page);
         rc = VMI_SUCCESS;
     }
 
-    return rc;
+    done: return rc;
 
 }
 
@@ -442,152 +474,127 @@ status_t clear_reg_event(vmi_instance_t vmi, vmi_event_t *event)
 
 }
 
-status_t clear_mem_event(vmi_instance_t vmi, vmi_event_t *event)
-{
+status_t clear_mem_event(vmi_instance_t vmi, vmi_event_t *event) {
 
     status_t rc = VMI_FAILURE;
-    memevent_page_t *page = NULL;
     vmi_event_t *remove_event = NULL;
 
     vmi_memevent_granularity_t granularity = event->mem_event.granularity;
     addr_t page_key = event->mem_event.physical_address >> 12;
     vmi_mem_access_t page_access_flag = VMI_MEMACCESS_N;
 
-    if(vmi->shutting_down) {
-        rc = driver_set_mem_access(vmi, event->mem_event,
-                        page_access_flag);
-        goto done;
-    }
+    rb_red_blk_node* node = RBExactQuery(vmi->mem_events, &page_key);
+    memevent_page_t *page = node ? node->info : NULL;
 
     // Page has event(s) registered
-    page = g_hash_table_lookup(vmi->mem_events, &page_key);
-    if (NULL != page)
-    {
-        if (granularity == VMI_MEMEVENT_PAGE)
-        {
-            if (!page->event)
-            {
-                dbprint(VMI_DEBUG_EVENTS, "Can't disable page-level memevent, non registered!\n");
+    if (NULL != page) {
+        if (granularity == VMI_MEMEVENT_PAGE) {
+            if (!page->event) {
+                dbprint(VMI_DEBUG_EVENTS,
+                        "Can't disable page-level memevent, non registered!\n");
+                goto done;
             }
-            else
-            {
 
-                remove_event = page->event;
+            remove_event = page->event;
 
-                dbprint(VMI_DEBUG_EVENTS, "Disabling memory event on page: %"PRIu64"\n",
-                        remove_event->mem_event.physical_address);
+            dbprint(VMI_DEBUG_EVENTS,
+                    "Disabling memory event on page: %"PRIu64"\n",
+                    remove_event->mem_event.physical_address);
 
-                // We still have byte-level events registered on this page
-                if (page->byte_events)
-                {
-                    event_iter_t i;
-                    addr_t *pa;
-                    vmi_event_t *loop;
-                    for_each_event(vmi, i, page->byte_events, &pa, &loop)
-                    {
-                        page_access_flag = combine_mem_access(page_access_flag,
-                                loop->mem_event.in_access);
-                    }
+            //We still have byte-level events registered on this page
+            if (page->byte_events) {
+                addr_t low = 0ULL, high = ~low;
+                stk_stack *enum_events = RBEnumerate(page->byte_events, &low,
+                    &high);
+                rb_red_blk_node *cnode = NULL;
+                while ((cnode = StackPop(enum_events))) {
+                    vmi_event_t *cevent = (vmi_event_t *) cnode->info;
+                    page_access_flag = combine_mem_access(page_access_flag,
+                        cevent->mem_event.in_access);
                 }
+                free(enum_events);
+            }
 
-                rc = driver_set_mem_access(vmi, event->mem_event,
-                        page_access_flag);
+            rc = driver_set_mem_access(vmi, event->mem_event, page_access_flag);
 
-                if (rc == VMI_SUCCESS)
-                {
+            if (rc == VMI_SUCCESS) {
 
-                    page->event = NULL;
-                    page->access_flag = page_access_flag;
+                page->event = NULL;
+                page->access_flag = page_access_flag;
 
-                    if (!page->byte_events)
-                    {
-                        g_hash_table_remove(vmi->mem_events, &page_key);
-                    }
+                if (!page->byte_events) {
+                    RBDelete(vmi->mem_events, node);
+                    free(page);
                 }
             }
-        }
-        else if (granularity == VMI_MEMEVENT_BYTE)
-        {
-            if (!page->byte_events)
-            {
-                dbprint(VMI_DEBUG_EVENTS, "Can't disable byte-level memevent, non registered!\n");
+
+        } else if (granularity == VMI_MEMEVENT_BYTE) {
+            if (!page->byte_events) {
+                dbprint(VMI_DEBUG_EVENTS,
+                        "Can't disable byte-level memevent, non registered!\n");
+                goto done;
             }
-            else
-            {
 
-                remove_event = (vmi_event_t *) g_hash_table_lookup(
-                        page->byte_events,
-                        &(event->mem_event.physical_address));
+            rb_red_blk_node *byte_node = RBExactQuery(page->byte_events,
+                    &event->mem_event.physical_address);
+            remove_event = byte_node ? byte_node->info : NULL;
 
-                if (NULL == remove_event)
-                {
-                    dbprint(VMI_DEBUG_EVENTS,
-                            "Can't disable byte-level memevent, event not found on byte 0x%"PRIx64"!\n",
-                            event->mem_event.physical_address);
+            if (NULL == remove_event) {
+                dbprint(VMI_DEBUG_EVENTS,
+                        "Can't disable byte-level memevent, event not found on byte 0x%"PRIx64"!\n",
+                        event->mem_event.physical_address);
+                goto done;
+            }
+
+            RBDelete(page->byte_events, byte_node);
+
+            if (page->event) {
+                page_access_flag = combine_mem_access(page_access_flag,
+                        page->event->mem_event.in_access);
+            }
+
+            size_t byte_events_remaining = 0;
+            addr_t low = 0ULL, high = ~low;
+            stk_stack *enum_events = RBEnumerate(page->byte_events, &low,
+                    &high);
+            rb_red_blk_node *cnode = NULL;
+            while ((cnode = StackPop(enum_events))) {
+                byte_events_remaining++;
+                vmi_event_t *cevent = (vmi_event_t *) cnode->info;
+                page_access_flag = combine_mem_access(page_access_flag,
+                        cevent->mem_event.in_access);
+            }
+            free(enum_events);
+
+            rc = driver_set_mem_access(vmi, remove_event->mem_event,
+                    page_access_flag);
+
+            if (rc == VMI_SUCCESS) {
+
+                page->access_flag = page_access_flag;
+
+                if (!byte_events_remaining) {
+                    RBTreeDestroy(page->byte_events);
+                    page->byte_events = NULL;
                 }
-                else
-                {
-                    g_hash_table_steal(page->byte_events,
-                            &(remove_event->mem_event.physical_address));
 
-                    if (page->event)
-                    {
-                        page_access_flag = combine_mem_access(page_access_flag,
-                                page->event->mem_event.in_access);
-                    }
-
-                    // We still have byte-level events registered on this page
-                    if (g_hash_table_size(page->byte_events) > 0)
-                    {
-                        event_iter_t i;
-                        addr_t *pa;
-                        vmi_event_t *loop;
-                        for_each_event(vmi, i, page->byte_events, &pa, &loop)
-                        {
-                            page_access_flag = combine_mem_access(
-                                    page_access_flag,
-                                    loop->mem_event.in_access);
-                        }
-                    }
-
-                    rc = driver_set_mem_access(vmi, remove_event->mem_event,
-                            page_access_flag);
-
-                    if (rc == VMI_SUCCESS)
-                    {
-
-                        page->access_flag = page_access_flag;
-
-                        if (g_hash_table_size(page->byte_events) == 0)
-                        {
-                            g_hash_table_destroy(page->byte_events);
-                            page->byte_events = NULL;
-                        }
-
-                        if (!page->event && !page->byte_events)
-                        {
-                            g_hash_table_remove(vmi->mem_events, &page_key);
-                        }
-                    }
-                    else
-                    {
-                        // place back the event as removal failed
-                        g_hash_table_insert(page->byte_events,
-                                &(remove_event->mem_event.physical_address),
-                                remove_event);
-                    }
+                if (!page->event && !page->byte_events) {
+                    RBDelete(vmi->mem_events, node);
+                    free(page);
                 }
+            } else {
+                // place back the event as removal failed
+                RBTreeInsert(page->byte_events,
+                        &event->mem_event.physical_address, event);
             }
         }
-    }
-    else
-    {
-        dbprint(VMI_DEBUG_EVENTS, "Disabling event failed, no event found on page: %"PRIu64"\n",
+    } else {
+        dbprint(VMI_DEBUG_EVENTS,
+                "Disabling event failed, no event found on page: %"PRIu64"\n",
                 page_key);
     }
 
-done:
-    return rc;
+    done: return rc;
 
 }
 
@@ -632,14 +639,17 @@ vmi_event_t *vmi_get_mem_event(vmi_instance_t vmi, addr_t physical_address,
 
     addr_t page_key = physical_address >> 12;
 
-    memevent_page_t *page = g_hash_table_lookup(vmi->mem_events, &page_key);
+    rb_red_blk_node* node = RBExactQuery(vmi->mem_events, &page_key);
+    memevent_page_t *page = node?node->info:NULL;
+
     if (page)
     {
         if (granularity == VMI_MEMEVENT_PAGE)
             return page->event;
-        else if (granularity == VMI_MEMEVENT_BYTE && page->byte_events)
+    /*    else if (granularity == VMI_MEMEVENT_BYTE && page->byte_events)
             return (vmi_event_t *) g_hash_table_lookup(page->byte_events,
                     &physical_address);
+    */
     }
 
     return NULL;

@@ -1,4 +1,4 @@
-SUBDIRS = config
+SUBDIRS = config rbtree
 
 h_sources = libvmi.h peparse.h
 c_sources = \
@@ -36,7 +36,7 @@ AM_CPPFLAGS = -I$(top_srcdir)
 
 lib_LTLIBRARIES= libvmi.la
 libvmi_la_SOURCES= $(h_sources) $(c_sources)
-libvmi_la_LIBADD= config/libconfig.la
+libvmi_la_LIBADD= config/libconfig.la rbtree/librbtree.la
 libvmi_la_CFLAGS= -fvisibility=hidden $(GLIB_CFLAGS)
 libvmi_la_LDFLAGS= -release $(RELEASE) $(GLIB_LIBS)
 libvmi_la_DEPENDENCIES= libvmi.h
