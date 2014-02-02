@@ -464,15 +464,30 @@ status_t process_mem(vmi_instance_t vmi, mem_event_request_t req)
     xc_domain_hvm_getcontext_partial(xch, dom,
             HVM_SAVE_CODE(CPU), req.vcpu_id, &ctx, sizeof(ctx));
 
-    rb_red_blk_node *node = RBExactQuery(vmi->mem_events, &req.gfn);
-    memevent_page_t * page = node?node->info:NULL;
     vmi_mem_access_t out_access;
     if(req.access_r) out_access = VMI_MEMACCESS_R;
     else if(req.access_w) out_access = VMI_MEMACCESS_W;
     else if(req.access_x) out_access = VMI_MEMACCESS_X;
 
-    if (page)
+    rb_red_blk_node *node = RBExactQuery(vmi->mem_events, &req.gfn);
+
+    // Check range
+    if(!node) {
+        rb_red_blk_node *cnode = RBTreeInsert(vmi->mem_events, &req.gfn, NULL);
+        rb_red_blk_node *prev = TreePredecessor(vmi->mem_events, cnode);
+        if(prev != vmi->mem_events->nil) {
+            memevent_page_t *prev_page = prev->info;
+            addr_t range = prev_page->event ? prev_page->event->mem_event.range : 1;
+            if((*(addr_t*)prev->key) + range > req.gfn) {
+                node = prev;
+            }
+        }
+        RBDelete(vmi->mem_events, cnode);
+    }
+
+    if (node)
     {
+        memevent_page_t * page = node->info;
         uint8_t cb_issued = 0;
 
         if (page->event && (page->event->mem_event.in_access & out_access))

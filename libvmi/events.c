@@ -310,11 +310,11 @@ status_t register_mem_event(vmi_instance_t vmi, vmi_event_t *event) {
     addr_t page_key = event->mem_event.physical_address >> 12;
 
     rb_red_blk_node* node = RBExactQuery(vmi->mem_events, &page_key);
-    memevent_page_t *page = node ? node->info : NULL;
 
     // Page already has event(s) registered
-    if (NULL != page) {
+    if (node) {
 
+        memevent_page_t *page = node->info;
         vmi_mem_access_t page_access_flag = combine_mem_access(
                 page->access_flag, event->mem_event.in_access);
 
@@ -342,7 +342,7 @@ status_t register_mem_event(vmi_instance_t vmi, vmi_event_t *event) {
             == driver_set_mem_access(vmi, event->mem_event,
                     event->mem_event.in_access)) {
 
-        page = (memevent_page_t *) g_malloc0(sizeof(memevent_page_t));
+        memevent_page_t *page = (memevent_page_t *) g_malloc0(sizeof(memevent_page_t));
         page->access_flag = event->mem_event.in_access;
         page->key = page_key;
         page->vmi = vmi;
@@ -362,9 +362,8 @@ status_t register_mem_event(vmi_instance_t vmi, vmi_event_t *event) {
 
             if (prev != vmi->mem_events->nil) {
                 memevent_page_t *prev_page = (memevent_page_t*) prev->info;
-                if (prev_page->event
-                        && prev_page->key + prev_page->event->mem_event.range
-                                > page->key) {
+                addr_t prev_page_range = prev_page->event ? prev_page->event->mem_event.range : 1;
+                if (prev_page->key + prev_page_range > page->key) {
                     RBDelete(vmi->mem_events, node);
                     return rc;
                 }
@@ -384,9 +383,6 @@ status_t register_mem_event(vmi_instance_t vmi, vmi_event_t *event) {
 
         } else {
             register_mem_event_byte(vmi, event, page, event->mem_event.in_access);
-            /*dbprint(VMI_DEBUG_EVENTS,
-             "Enabling memory event on byte 0x%"PRIx64", page: %"PRIu64"\n",
-             event->mem_event.physical_address, page_key);*/
         }
 
         rc = VMI_SUCCESS;
