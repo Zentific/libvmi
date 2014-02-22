@@ -236,7 +236,7 @@ void print_pe_header(vmi_instance_t vmi, addr_t image_base_p, uint8_t *pe) {
         vmi_read_pa(vmi, section_addr, (uint8_t *)&section, sizeof(struct section_header));
 
         // The character array is not null terminated, so only print the first 8 characters!
-        printf("\tSection %u: %.8s\n", c+1, section.short_name);
+        printf("\tSection %u: %.8s @ PA 0x%"PRIx64". Size: %u\n", c+1, section.short_name, image_base_p + section.virtual_address, section.size_of_raw_data);
     }
 }
 
